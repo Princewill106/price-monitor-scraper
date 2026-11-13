@@ -1,0 +1,7 @@
+[
+ {"product": "PowerPal 20K power bank", "my_price": 27000, "competitors": [
+   {"store": "GadgetHub", "url": "https://gadgethub.example/powerpal-20k", "sample": "sample_page_gadgethub.html",
+    "price_selector": "span.price", "stock_selector": "div.stock"},
+   {"store": "TechMart", "url": "https://techmart.example/p/123", "sample": "sample_page_techmart.html",
+    "price_selector": "div#product-price", "stock_selector": "p.availability"}]}
+]

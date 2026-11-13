@@ -1,0 +1,262 @@
+{
+  "name": "Competitor Price Monitor (AI Automation Projects #45)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "a23a08f6-a5b7-5a5e-bc47-0400edce25fe",
+      "name": "Schedule (daily 8am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Products and competitor pages to watch. price_selector / stock_selector: tag.class or tag#id\nreturn [\n {\n  \"product\": \"PowerPal 20K power bank\",\n  \"my_price\": 27000,\n  \"last_price\": 29500,\n  \"store\": \"GadgetHub\",\n  \"url\": \"https://gadgethub.example/powerpal-20k\",\n  \"price_selector\": \"span.price\",\n  \"stock_selector\": \"div.stock\"\n },\n {\n  \"product\": \"PowerPal 20K power bank\",\n  \"my_price\": 27000,\n  \"last_price\": 28500,\n  \"store\": \"TechMart\",\n  \"url\": \"https://techmart.example/p/123\",\n  \"price_selector\": \"div#product-price\",\n  \"stock_selector\": \"p.availability\"\n }\n].map(json => ({ json }));"
+      },
+      "id": "85760a9d-abda-5738-ada7-1b5d2854824c",
+      "name": "Watchlist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "b6226645-ed74-5ccb-bfb7-a06ed9763b84",
+      "name": "Fetch product page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "714aea8a-3446-5d1f-bdea-541e9ab2e378",
+      "name": "Test with sample data",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sample data from this repo. Click 'Test workflow' to run the whole flow on it.\nconst sample = [\n {\n  \"product\": \"PowerPal 20K power bank\",\n  \"my_price\": 27000,\n  \"last_price\": 29500,\n  \"store\": \"GadgetHub\",\n  \"price_selector\": \"span.price\",\n  \"stock_selector\": \"div.stock\",\n  \"html\": \"<html><body><div class=\\\"product\\\"><h1>PowerPal 20K Power Bank</h1>\\n<span class=\\\"was-price\\\">₦32,000</span>\\n<span class=\\\"price\\\">₦25,900</span>\\n<div class=\\\"stock\\\">In stock - 12 left</div></div></body></html>\\n\"\n },\n {\n  \"product\": \"PowerPal 20K power bank\",\n  \"my_price\": 27000,\n  \"last_price\": 28500,\n  \"store\": \"TechMart\",\n  \"price_selector\": \"div#product-price\",\n  \"stock_selector\": \"p.availability\",\n  \"html\": \"<html><body><main><h1>PowerPal 20000mAh</h1>\\n<div id=\\\"product-price\\\"><b>NGN</b> 28,500.00</div>\\n<p class=\\\"availability\\\">Out of stock</p></main></body></html>\\n\"\n }\n];\nreturn sample.map(json => ({ json }));"
+      },
+      "id": "84817620-61db-5d10-b6bd-ee95d125846a",
+      "name": "Sample data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Competitor Price Monitor: core logic (ported from main.py)\n\n// ---- input normaliser (works for Webhook, Form, WhatsApp, Gmail, Sheets and sample data)\nconst input = $input.all().flatMap(i => {\n  const j = i.json || {};\n  if (j.messages && Array.isArray(j.messages)) {           // WhatsApp Trigger\n    return j.messages.filter(m => m.text).map(m => ({ from: '+' + m.from, text: m.text.body }));\n  }\n  if (j.Subject !== undefined || j.From !== undefined) {     // Gmail Trigger (simple)\n    return [{ from: (j.From || '').replace(/.*<|>.*/g, ''), subject: j.Subject || '', body: j.snippet || j.text || '' }];\n  }\n  const b = (j.body !== undefined && j.headers !== undefined) ? j.body : j;   // Webhook wraps payload in body\n  if (Array.isArray(b)) return b;\n  if (b && Array.isArray(b.items)) return b.items;\n  return [b];\n});\n\nlet watch = []; try { watch = $('Watchlist').all().map(i => i.json); } catch (e) { /* sample-data run */ }\nconst rows = input.map((r, i) => r.html ? r : { ...watch[i], html: r.data || '' });\nconst extract = (html, sel) => { const [, tag, sep, val] = sel.match(/^(\\w+)([.#])?(.*)$/) || [];\n  const attr = sep === '#' ? `id=[\"']${val}[\"']` : `class=[\"'](?:[^\"']*\\\\s)?${val}(?:\\\\s[^\"']*)?[\"']`;\n  const m = html.match(new RegExp(`<${tag}[^>]*${val ? attr : ''}[^>]*>([\\\\s\\\\S]*?)</${tag}>`, 'i')); return m ? m[1].replace(/<[^>]+>/g, '').trim() : null; };\nconst out = [];\nfor (const r of rows) {\n  const pt = extract(r.html, r.price_selector), m = pt && pt.replace(/\\s/g, '').match(/(\\d[\\d,]*\\.?\\d*)/), price = m ? Number(m[1].replace(/,/g, '')) : null;\n  const stock = (extract(r.html, r.stock_selector) || '').toLowerCase(), inStock = !/out of stock|sold out/.test(stock), alerts = [];\n  if (price && r.last_price && price < r.last_price * 0.95) alerts.push(`${r.store} dropped ${r.product} from ${r.last_price.toLocaleString()} to ${price.toLocaleString()}`);\n  if (price && inStock && price < r.my_price) alerts.push(`${r.store} undercuts you on ${r.product}: ${price.toLocaleString()} vs your ${r.my_price.toLocaleString()}`);\n  out.push({ route: alerts.length ? 'alert' : 'ok', store: r.store, product: r.product, price, in_stock: inStock, alerts: alerts.join('\\n') });\n}\nreturn out.map(json => ({ json }));\n"
+      },
+      "id": "322f24ca-9a8a-599d-8394-49ea43cac445",
+      "name": "Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "61a74d38-ecfe-53fe-950d-87821d56c023",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "alert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "alert"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "346b7a6e-4e7d-55e2-ae03-057c6bdea454",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        960,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#pricing",
+          "mode": "name"
+        },
+        "text": "={{ $json.alerts }}",
+        "otherOptions": {}
+      },
+      "id": "02858192-eed2-57c9-a58f-3f3f06a5de02",
+      "name": "Price alert (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1220,
+        120
+      ],
+      "webhookId": "02858192-eed2-57c9-a58f-3f3f06a5de02"
+    },
+    {
+      "parameters": {
+        "content": "## Competitor Price Monitor\nTracks competitor prices across stores, keeps the history, and alerts you when someone undercuts you.\n\nEvery morning it loads each competitor page in the Watchlist, extracts price and stock with simple selectors, and alerts on Slack when a price drops more than 5% or undercuts yours. Only monitor public pages, respect each site's terms and robots.txt, and keep the schedule gentle. Keep last_price updated (e.g. from a sheet) to detect drops.\n\n**Try it:** click *Test workflow* to run on the sample data. Then connect your credentials on the output nodes and activate.\n\nCode and docs: github.com/Princewill106/price-monitor-scraper",
+        "height": 340,
+        "width": 420,
+        "color": 5
+      },
+      "id": "cf2d9c62-71ae-5398-81db-5b9bbe1e181f",
+      "name": "About this workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -460
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule (daily 8am)": {
+      "main": [
+        [
+          {
+            "node": "Watchlist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watchlist": {
+      "main": [
+        [
+          {
+            "node": "Fetch product page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test with sample data": {
+      "main": [
+        [
+          {
+            "node": "Sample data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch product page": {
+      "main": [
+        [
+          {
+            "node": "Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample data": {
+      "main": [
+        [
+          {
+            "node": "Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logic": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Price alert (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
